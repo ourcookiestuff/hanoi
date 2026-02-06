@@ -3,6 +3,7 @@
 #include <osg/ShapeDrawable>
 #include <osg/PositionAttitudeTransform>
 #include <osgViewer/Viewer>
+#include <osgViewer/ViewerEventHandlers>
 #include <osgGA/TrackballManipulator>
 #include <osg/Math>
 
@@ -119,7 +120,11 @@ int main() {
     
     OrbitManipulator* manipulator = new OrbitManipulator();
     viewer.setCameraManipulator(manipulator);
+
     viewer.setUpViewInWindow(100, 100, 800, 600);
+    viewer.addEventHandler(new osgViewer::WindowSizeHandler);
+
+    viewer.realize();
     manipulator->updateCamera();  // początkowa pozycja kamery
     
     return viewer.run();
