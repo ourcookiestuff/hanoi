@@ -7,15 +7,19 @@
 #include <osgGA/TrackballManipulator>
 #include <osgGA/GUIEventHandler>
 #include <osgUtil/LineSegmentIntersector>
-#include <osg/Math>
+#include <osgText/Text>
+#include <osg/Camera>
 #include <iostream>
 #include <vector>
+#include <osg/NodeCallback>
+#include <osg/Timer>
 
 // Struktura dysku
 struct Disk {
     int size;
     osg::ref_ptr<osg::PositionAttitudeTransform> transform;
     osg::ref_ptr<osg::Geode> geode;
+    std::string colorName;
 };
 
 // Struktura słupka
@@ -24,67 +28,97 @@ struct Pole {
     std::vector<Disk*> disks;
 };
 
+class ExitAfterDelay : public osg::NodeCallback {
+    double startTime;
+    osgViewer::Viewer* viewer;
+public:
+    ExitAfterDelay(osgViewer::Viewer* v)
+        : viewer(v), startTime(osg::Timer::instance()->time_s()) {}
+
+    virtual void operator()(osg::Node* node, osg::NodeVisitor* nv) {
+        double now = osg::Timer::instance()->time_s();
+        if(now - startTime >= 3.0) {  // po 3 sekundach
+            viewer->setDone(true);     // zamknij aplikację
+            return;
+        }
+        traverse(node, nv);
+    }
+};
+
 // Klasa zarządzająca grą
 class HanoiGame : public osg::Referenced {
 public:
     Pole poles[3];
     int selectedPole;
+    osg::ref_ptr<osgText::Text> hudText;
+    int moveCount;
+
+    osg::Group* root;
+    osgViewer::Viewer* viewer;
     
-    HanoiGame() : selectedPole(-1) {}
-    
+    HanoiGame() : selectedPole(-1), moveCount(0), root(nullptr), viewer(nullptr) {}
+
     osg::Vec3 getDiskPosition(int poleIndex, int diskHeight) {
         float xPos[] = {-5.0f, 0.0f, 5.0f};
         return osg::Vec3(xPos[poleIndex], 0, 0.5f + diskHeight * 0.6f);
     }
-    
+
     bool isValidMove(int from, int to) {
         if (from < 0 || from > 2 || to < 0 || to > 2) return false;
         if (poles[from].disks.empty()) return false;
         if (from == to) return false;
         if (poles[to].disks.empty()) return true;
-        
+
         int fromSize = poles[from].disks.back()->size;
         int toSize = poles[to].disks.back()->size;
         return fromSize < toSize;
     }
-    
+
     void moveDisk(int from, int to) {
         if (!isValidMove(from, to)) {
-            std::cout << "❌ Nieprawidłowy ruch!" << std::endl;
+            setHUDText("Nieprawidlowy ruch!");
             return;
         }
-        
+
+        moveCount++;
+
         Disk* disk = poles[from].disks.back();
         poles[from].disks.pop_back();
         poles[to].disks.push_back(disk);
-        
+
         int height = poles[to].disks.size() - 1;
         disk->transform->setPosition(getDiskPosition(to, height));
-        
-        std::cout << "✓ Przeniesiono dysk rozmiaru " << disk->size 
-                  << " ze słupka " << from << " na słupek " << to << std::endl;
-        
+
+        setHUDText("Ruch: " + std::to_string(moveCount) + " \nPrzeniesiono dysk " + disk->colorName +
+                   " na slupek " + std::to_string(to + 1));
+
         if (poles[2].disks.size() == 4) {
-            std::cout << "\n🎉🎉🎉 GRATULACJE! WYGRAŁEŚ! 🎉🎉🎉\n" << std::endl;
+            setHUDText("GRATULACJE! WYGRALES W " + std::to_string(moveCount) + " RUCHACH!");
+            root->setUpdateCallback(new ExitAfterDelay(viewer)); // zamknij po 5s
+
         }
     }
-    
+
     void highlightTopDisk(int poleIndex) {
         if (poleIndex >= 0 && poleIndex < 3 && !poles[poleIndex].disks.empty()) {
             Disk* disk = poles[poleIndex].disks.back();
             osg::Vec3 pos = disk->transform->getPosition();
             pos.z() += 0.5f;
             disk->transform->setPosition(pos);
-            std::cout << "🔵 Wybrano słupek " << poleIndex << std::endl;
+            setHUDText("Wybrano slupek " + std::to_string(poleIndex + 1));
         }
     }
-    
+
     void unhighlightTopDisk(int poleIndex) {
         if (poleIndex >= 0 && poleIndex < 3 && !poles[poleIndex].disks.empty()) {
             int height = poles[poleIndex].disks.size() - 1;
             Disk* disk = poles[poleIndex].disks.back();
             disk->transform->setPosition(getDiskPosition(poleIndex, height));
         }
+    }
+
+    void setHUDText(const std::string& str) {
+        if(hudText) hudText->setText(str);
     }
 };
 
@@ -98,7 +132,7 @@ private:
 public:
     OrbitManipulator() : osgGA::TrackballManipulator() {
         _distance = 30.0;
-        _angle = osg::PI;  // Początkowo patrzymy z boku
+        _angle = -osg::PI_2;  // Początkowo patrzymy z boku
         _elevation = 0.5;  // Stała wysokość kamery
     }
     
@@ -158,14 +192,14 @@ public:
         int clickedPole = pickPole(ea, viewer);
         
         if (clickedPole == -1) {
-            std::cout << "❌ Nie kliknięto na żaden słupek" << std::endl;
+            //std::cout << "Nie kliknięto na żaden słupek" << std::endl;
             return true;
         }
 
         if (game->selectedPole == -1) {
             // Pierwszy klik - wybór źródła
             if (game->poles[clickedPole].disks.empty()) {
-                std::cout << "❌ Ten słupek jest pusty!" << std::endl;
+                //std::cout << "Ten słupek jest pusty!" << std::endl;
                 return true;
             }
             
@@ -253,10 +287,36 @@ osg::Geode* createDiskGeometry(float radius, osg::Vec4 color) {
     return geode;
 }
 
+osg::ref_ptr<osg::Camera> createHUDCamera(float width, float height) {
+    osg::ref_ptr<osg::Camera> camera = new osg::Camera;
+    camera->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+    camera->setClearMask(GL_DEPTH_BUFFER_BIT);
+    camera->setRenderOrder(osg::Camera::POST_RENDER);
+    camera->setAllowEventFocus(false);
+    camera->setProjectionMatrix(osg::Matrix::ortho2D(0, width, 0, height));
+    camera->setViewMatrix(osg::Matrix::identity());
+    return camera;
+}
+
+osg::ref_ptr<osgText::Text> createHUDText(float x, float y, const std::string& str, float size = 20.0f) {
+    osg::ref_ptr<osgText::Text> text = new osgText::Text;
+    text->setFont(osgText::readFontFile("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"));
+    text->setCharacterSize(size);
+    text->setPosition(osg::Vec3(x, y, 0));
+    text->setText(str);
+    text->setColor(osg::Vec4(1,1,1,1));
+    return text;
+}
+
 int main() {
+    osgViewer::Viewer viewer;
+    
     osg::ref_ptr<osg::Group> root = new osg::Group();
     osg::ref_ptr<HanoiGame> game = new HanoiGame();
     
+    game->root = root.get();
+    game->viewer = &viewer;
+
     root->addChild(createBase());
     
     // Dodaj słupki
@@ -266,6 +326,7 @@ int main() {
         game->poles[i].node = pole;
     }
     
+    std::string colorNames[] = {"CZERWONY","ZIELONY","NIEBIESKI","ZOLTY"};
     osg::Vec4 colors[] = {
         osg::Vec4(1.0, 0.2, 0.2, 1.0),   // Czerwony (największy)
         osg::Vec4(0.2, 1.0, 0.2, 1.0),   // Zielony
@@ -274,26 +335,23 @@ int main() {
     };
     
     // Utwórz dyski (od największego do najmniejszego)
-    for (int i = 0; i < 4; i++) { 
-        float radius = 2.5 - i * 0.5;
-        
-        osg::ref_ptr<osg::PositionAttitudeTransform> transform = 
-            new osg::PositionAttitudeTransform();
+    for (int i = 0; i < 4; i++) {
+        float radius = 2.5 - i*0.5;
+        osg::ref_ptr<osg::PositionAttitudeTransform> transform = new osg::PositionAttitudeTransform();
         transform->setPosition(game->getDiskPosition(0, i));
-        
-        osg::ref_ptr<osg::Geode> diskGeom = createDiskGeometry(radius, colors[i]);
-        transform->addChild(diskGeom);
+
+        osg::ref_ptr<osg::Geode> geom = createDiskGeometry(radius, colors[i]);
+        transform->addChild(geom);
         root->addChild(transform);
-        
+
         Disk* disk = new Disk();
-        disk->size = i;  // 0 = największy, 3 = najmniejszy
+        disk->size = 4 - i; // najmniejszy =1, największy=4
         disk->transform = transform;
-        disk->geode = diskGeom;
-        
+        disk->geode = geom;
+        disk->colorName = colorNames[i];
         game->poles[0].disks.push_back(disk);
     }
     
-    osgViewer::Viewer viewer;
     viewer.setSceneData(root.get());
     
     // Użyj Twojego oryginalnego manipulatora kamery
@@ -310,22 +368,21 @@ int main() {
     viewer.realize();
     
     auto traits = viewer.getCamera()->getGraphicsContext()->getTraits();
-    std::cout << "Rozmiar okna: " << traits->width << " x " << traits->height << std::endl;
-    viewer.getCamera()->setViewport(0, 0, traits->width, traits->height);
-    
+    float width = traits->width;
+    float height = traits->height;
+
+    // stwórz HUD
+    osg::ref_ptr<osg::Camera> hudCamera = createHUDCamera(width, height);
+    osg::ref_ptr<osg::Geode> hudGeode = new osg::Geode();
+    osg::ref_ptr<osgText::Text> hudText = createHUDText(10, height - 30, "Witaj w Wiezach Hanoi! Przenies wszystkie krazki ze slupka 1 na slupek 3");
+    hudGeode->addDrawable(hudText);
+    hudCamera->addChild(hudGeode);
+    root->addChild(hudCamera);
+
+    game->hudText = hudText;
+
     // Ustaw początkową pozycję kamery
     manipulator->updateCamera();
-    
-    std::cout << "\n╔═══════════════════════════════════════╗" << std::endl;
-    std::cout << "║       🗼  WIEŻE HANOI  🗼            ║" << std::endl;
-    std::cout << "╚═══════════════════════════════════════╝" << std::endl;
-    std::cout << "\n📋 INSTRUKCJE:" << std::endl;
-    std::cout << "  🖱️  LEWY przycisk + ruch myszy - obrót kamery wokół sceny" << std::endl;
-    std::cout << "  🖱️  PRAWY przycisk myszy - graj:" << std::endl;
-    std::cout << "      1️⃣  Kliknij na słupek źródłowy (dysk się podniesie)" << std::endl;
-    std::cout << "      2️⃣  Kliknij na słupek docelowy (dysk się przeniesie)" << std::endl;
-    std::cout << "  🎯 CEL: Przenieś wszystkie dyski na prawy słupek!" << std::endl;
-    std::cout << "  📏 ZASADA: Większy dysk nie może leżeć na mniejszym\n" << std::endl;
     
     return viewer.run();
 }
