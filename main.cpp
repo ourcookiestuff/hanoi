@@ -17,23 +17,23 @@
 // Struktura dysku
 struct Disk {
     int size;
-    osg::ref_ptr<osg::PositionAttitudeTransform> transform;
-    osg::ref_ptr<osg::Geode> geode;
+    osg::ref_ptr<osg::PositionAttitudeTransform> transform;    // do przesuwania dysku
+    osg::ref_ptr<osg::Geode> geode;    // geometria dysku 
     std::string colorName;
 };
 
 // Struktura słupka
 struct Pole {
-    osg::ref_ptr<osg::Node> node;
-    std::vector<Disk*> disks;
+    osg::ref_ptr<osg::Node> node;   // węzeł reprezentujący słupek
+    std::vector<Disk*> disks;   // lista dysków na słupku
 };
 
+// automatycznie zamknięcie wygranej
 class ExitAfterDelay : public osg::NodeCallback {
     double startTime;
     osgViewer::Viewer* viewer;
 public:
-    ExitAfterDelay(osgViewer::Viewer* v)
-        : viewer(v), startTime(osg::Timer::instance()->time_s()) {}
+    ExitAfterDelay(osgViewer::Viewer* v) : viewer(v), startTime(osg::Timer::instance()->time_s()) {}
 
     virtual void operator()(osg::Node* node, osg::NodeVisitor* nv) {
         double now = osg::Timer::instance()->time_s();
@@ -48,91 +48,98 @@ public:
 // Klasa zarządzająca grą
 class HanoiGame : public osg::Referenced {
 public:
-    Pole poles[3];
-    int selectedPole;
-    osg::ref_ptr<osgText::Text> hudText;
-    int moveCount;
+    Pole poles[3];    // tablica trzech słupków
+    int selectedPole;   // który słupek wybrano
+    osg::ref_ptr<osgText::Text> hudText;    // tekst na ekranie
+    int moveCount;    // liczba wykonanych ruchów
 
+    // wskaźniki do głównej sceny i okna
     osg::Group* root;
     osgViewer::Viewer* viewer;
     
     HanoiGame() : selectedPole(-1), moveCount(0), root(nullptr), viewer(nullptr) {}
 
+    // Gdzie powinien być dysk w przestrzeni 
     osg::Vec3 getDiskPosition(int poleIndex, int diskHeight) {
-        float xPos[] = {-5.0f, 0.0f, 5.0f};
+        float xPos[] = {-5.0f, 0.0f, 5.0f};    // pozycje X słupków
         return osg::Vec3(xPos[poleIndex], 0, 0.5f + diskHeight * 0.6f);
     }
 
+    // czy ruch jest dozwolony
     bool isValidMove(int from, int to) {
-        if (from < 0 || from > 2 || to < 0 || to > 2) return false;
-        if (poles[from].disks.empty()) return false;
-        if (from == to) return false;
-        if (poles[to].disks.empty()) return true;
+        // if (from < 0 || from > 2 || to < 0 || to > 2) return false;
+        if (poles[from].disks.empty()) return false; // nie można brać z pustego
+        if (from == to) return false; // nie na ten sam
+        if (poles[to].disks.empty()) return true; // jeśli docelowy jest pusty to ok
 
         int fromSize = poles[from].disks.back()->size;
         int toSize = poles[to].disks.back()->size;
-        return fromSize < toSize;
+        return fromSize < toSize; // ruch ok jeśli przenosimy mniejszy dysk na większy
     }
 
+    // ruch dla dysku
     void moveDisk(int from, int to) {
         if (!isValidMove(from, to)) {
-            setHUDText("Nieprawidlowy ruch!");
+            setText("Nieprawidlowy ruch!");
             return;
         }
 
         moveCount++;
 
-        Disk* disk = poles[from].disks.back();
-        poles[from].disks.pop_back();
-        poles[to].disks.push_back(disk);
+        Disk* disk = poles[from].disks.back(); // weź dysk ze słupka
+        poles[from].disks.pop_back(); // usuń go ze słupka
+        poles[to].disks.push_back(disk); // dodaj na docelowy słupek
 
         int height = poles[to].disks.size() - 1;
-        disk->transform->setPosition(getDiskPosition(to, height));
+        disk->transform->setPosition(getDiskPosition(to, height)); // przesuń dysk w scenie 3D na nową pozycję
 
-        setHUDText("Ruch: " + std::to_string(moveCount) + " \nPrzeniesiono dysk " + disk->colorName +
+        setText("Ruch: " + std::to_string(moveCount) + " \nPrzeniesiono dysk " + disk->colorName +
                    " na slupek " + std::to_string(to + 1));
 
         if (poles[2].disks.size() == 4) {
-            setHUDText("GRATULACJE! WYGRALES W " + std::to_string(moveCount) + " RUCHACH!");
-            root->setUpdateCallback(new ExitAfterDelay(viewer)); // zamknij po 5s
+            setText("GRATULACJE! WYGRALES W " + std::to_string(moveCount) + " RUCHACH!");
+            root->setUpdateCallback(new ExitAfterDelay(viewer)); // timer - zamknij po 3s
 
         }
     }
 
+    // podnoszenie dysku o 0.5 jednostki
     void highlightTopDisk(int poleIndex) {
-        if (poleIndex >= 0 && poleIndex < 3 && !poles[poleIndex].disks.empty()) {
+        if (!poles[poleIndex].disks.empty()) {
             Disk* disk = poles[poleIndex].disks.back();
             osg::Vec3 pos = disk->transform->getPosition();
             pos.z() += 0.5f;
             disk->transform->setPosition(pos);
-            setHUDText("Wybrano slupek " + std::to_string(poleIndex + 1));
+            setText("Wybrano slupek " + std::to_string(poleIndex + 1));
         }
     }
 
+    // powrót na normalną wysokość
     void unhighlightTopDisk(int poleIndex) {
-        if (poleIndex >= 0 && poleIndex < 3 && !poles[poleIndex].disks.empty()) {
+        if (!poles[poleIndex].disks.empty()) {
             int height = poles[poleIndex].disks.size() - 1;
             Disk* disk = poles[poleIndex].disks.back();
             disk->transform->setPosition(getDiskPosition(poleIndex, height));
         }
     }
 
-    void setHUDText(const std::string& str) {
+    // zmiana tekstu na scenie
+    void setText(const std::string& str) {
         if(hudText) hudText->setText(str);
     }
 };
 
-// Twój oryginalny manipulator kamery
+// klasa manipulatora kamery
 class OrbitManipulator : public osgGA::TrackballManipulator {
 private:
-    double _distance;
+    double _distance;   // odległość od centrum sceny
     double _angle;      // kąt obrotu wokół sceny (w radianach)
     double _elevation;  // kąt wysokości kamery (stały)
     
 public:
     OrbitManipulator() : osgGA::TrackballManipulator() {
-        _distance = 30.0;
-        _angle = -osg::PI_2;  // Początkowo patrzymy z boku
+        _distance = 30.0;   // 30 jednostek od centrum
+        _angle = -osg::PI_2;  // Początkowo patrzymy od przodu (od strony gracza)
         _elevation = 0.5;  // Stała wysokość kamery
     }
     
@@ -152,7 +159,7 @@ public:
     }
     
     virtual bool performMovementRightMouseButton(const double eventTimeDelta, const double dx, const double dy) {
-        return false;
+        return false;  // używamy do gry
     }
     
     void updateCamera() {
@@ -169,15 +176,15 @@ public:
     }
 };
 
-// Handler kliknięć - używa PRAWEGO przycisku myszy aby nie kolidować z kamerą
+// Handler kliknięć
 class ClickHandler : public osgGA::GUIEventHandler {
 public:
-    osg::ref_ptr<HanoiGame> game;
+    osg::ref_ptr<HanoiGame> game;   // wskaźnik do gry
 
     ClickHandler(HanoiGame* g) : game(g) {}
 
-    virtual bool handle(const osgGA::GUIEventAdapter& ea,
-                        osgGA::GUIActionAdapter& aa) {
+    // główna funkcja - przy każdym kliknięciu myszki
+    virtual bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa) {
 
         // TYLKO prawy przycisk myszy i tylko RELEASE (puszczenie przycisku)
         if (ea.getEventType() != osgGA::GUIEventAdapter::RELEASE)
@@ -186,6 +193,7 @@ public:
         if (ea.getButton() != osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON)
             return false;
 
+        // konwersja wskażnika na Viewer - żeby zobaczyć co klinkeliśmy
         osgViewer::Viewer* viewer = dynamic_cast<osgViewer::Viewer*>(&aa);
         if (!viewer) return false;
 
@@ -203,8 +211,8 @@ public:
                 return true;
             }
             
-            game->selectedPole = clickedPole;
-            game->highlightTopDisk(clickedPole);
+            game->selectedPole = clickedPole; // zapis wybranego słupka
+            game->highlightTopDisk(clickedPole); // podnieś go do góry
         } else {
             // Drugi klik - wykonaj ruch
             int from = game->selectedPole;
@@ -213,25 +221,32 @@ public:
             game->selectedPole = -1;
         }
 
-        return true;
+        return true; // ok - obsłużyliśmy zdarzenie
     }
 
+    // funkcja sprawdzająca w co klikneliśmy
     int pickPole(const osgGA::GUIEventAdapter& ea, osgViewer::Viewer* viewer) {
+        // "strzela promień" z kamery przez pozycję myszy
         osg::ref_ptr<osgUtil::LineSegmentIntersector> intersector =
             new osgUtil::LineSegmentIntersector(
                 osgUtil::Intersector::WINDOW,
                 ea.getX(), ea.getY()
             );
 
+        // odwiedzacz który przechodzi przez scenę i sprawdza kolizje
         osgUtil::IntersectionVisitor iv(intersector.get());
+        // sprawdź wszystkie obiekty w scenie
         viewer->getCamera()->accept(iv);
 
+        // pudło
         if (!intersector->containsIntersections())
             return -1;
 
         // Sprawdź który słupek został kliknięty
         for (const auto& intersection : intersector->getIntersections()) {
+            // ścieżka węzłów od kamery do trafionego obiektu, sprawdzamy każdy węzeł na tej ścieżce
             for (auto* node : intersection.nodePath) {
+                // sprawdzamy każdy z 3 słupków
                 for (int i = 0; i < 3; i++) {
                     // Sprawdź czy kliknięto na słupek
                     if (node == game->poles[i].node.get()) {
@@ -287,9 +302,10 @@ osg::Geode* createDiskGeometry(float radius, osg::Vec4 color) {
     return geode;
 }
 
+// kamera do wyświetlania tekstu 2D
 osg::ref_ptr<osg::Camera> createHUDCamera(float width, float height) {
-    osg::ref_ptr<osg::Camera> camera = new osg::Camera;
-    camera->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+    osg::ref_ptr<osg::Camera> camera = new osg::Camera; // druga kamera
+    camera->setReferenceFrame(osg::Transform::ABSOLUTE_RF); //nie zależy od głównej kamery - ma własny układ współrzędnych
     camera->setClearMask(GL_DEPTH_BUFFER_BIT);
     camera->setRenderOrder(osg::Camera::POST_RENDER);
     camera->setAllowEventFocus(false);
@@ -298,9 +314,10 @@ osg::ref_ptr<osg::Camera> createHUDCamera(float width, float height) {
     return camera;
 }
 
+// tworzenie tekstu na ekranie
 osg::ref_ptr<osgText::Text> createHUDText(float x, float y, const std::string& str, float size = 20.0f) {
     osg::ref_ptr<osgText::Text> text = new osgText::Text;
-    text->setFont(osgText::readFontFile("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"));
+    text->setFont(osgText::readFontFile("fonts/arial.ttf"));
     text->setCharacterSize(size);
     text->setPosition(osg::Vec3(x, y, 0));
     text->setText(str);
@@ -309,17 +326,17 @@ osg::ref_ptr<osgText::Text> createHUDText(float x, float y, const std::string& s
 }
 
 int main() {
-    osgViewer::Viewer viewer;
+    osgViewer::Viewer viewer; // główne okno aplikacji 3D
     
-    osg::ref_ptr<osg::Group> root = new osg::Group();
-    osg::ref_ptr<HanoiGame> game = new HanoiGame();
+    osg::ref_ptr<osg::Group> root = new osg::Group(); // korzeń drzewa sceny
+    osg::ref_ptr<HanoiGame> game = new HanoiGame(); // obiekt gry
     
     game->root = root.get();
     game->viewer = &viewer;
 
-    root->addChild(createBase());
+    root->addChild(createBase()); // dodawanie podstawy wieży
     
-    // Dodaj słupki
+    // dodawanie słupków
     for (int i = 0; i < 3; i++) {
         osg::ref_ptr<osg::Node> pole = createPole(-5.0f + i * 5.0f);
         root->addChild(pole);
@@ -337,6 +354,7 @@ int main() {
     // Utwórz dyski (od największego do najmniejszego)
     for (int i = 0; i < 4; i++) {
         float radius = 2.5 - i*0.5;
+        // Tworzymy Transform dla dysku (żeby móc go przesuwać)
         osg::ref_ptr<osg::PositionAttitudeTransform> transform = new osg::PositionAttitudeTransform();
         transform->setPosition(game->getDiskPosition(0, i));
 
@@ -354,7 +372,7 @@ int main() {
     
     viewer.setSceneData(root.get());
     
-    // Użyj Twojego oryginalnego manipulatora kamery
+    // własny manipulator kamery
     OrbitManipulator* manipulator = new OrbitManipulator();
     viewer.setCameraManipulator(manipulator);
     manipulator->setAllowThrow(false);
@@ -364,6 +382,12 @@ int main() {
     
     // Dodaj handler statystyk
     viewer.addEventHandler(new osgViewer::StatsHandler);
+
+    // Handler do zamykania (ESC)
+    // viewer.addEventHandler(new osgViewer::StatsHandler);
+    // viewer.addEventHandler(new osgViewer::WindowSizeHandler);
+    // viewer.addEventHandler(new osgViewer::ThreadingHandler);
+    // viewer.addEventHandler(new osgViewer::HelpHandler);
     
     viewer.realize();
     
@@ -379,10 +403,12 @@ int main() {
     hudCamera->addChild(hudGeode);
     root->addChild(hudCamera);
 
+    // zapisz wskaźnik do tekstu w obiekcie gry
     game->hudText = hudText;
 
     // Ustaw początkową pozycję kamery
     manipulator->updateCamera();
     
+    // główna pętla gry
     return viewer.run();
 }
